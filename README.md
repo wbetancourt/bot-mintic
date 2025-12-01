@@ -40,3 +40,29 @@ Instala las dependencias listadas en `requirements.txt`.
 - Usa Streamlit Cloud Secrets para producción.
 
 Si quieres, puedo crear el commit con estos cambios y preparar el repositorio para subirlo a GitHub.
+## Usar un dataset remoto con `CSV_URL`
+
+La aplicación puede cargar un dataset desde una URL pública (CSV o JSON) usando la variable `CSV_URL`. Esto es útil si no quieres subir archivos grandes al repositorio.
+
+- Streamlit Cloud (recomendado):
+  1. Ve a tu app en Streamlit Cloud → Settings → Secrets.
+  2. Añade una entrada `CSV_URL` con la URL pública, por ejemplo:
+    ```text
+    CSV_URL=https://www.datos.gov.co/resource/uzcf-b9dh.json
+    ```
+  3. Guarda y redepliega la app; `app.py` leerá `st.secrets['CSV_URL']` automáticamente.
+
+- Desarrollo local (opcional):
+  1. Crea/edita tu archivo `.env` en la raíz del proyecto (ya está en `.gitignore`) y añade:
+    ```powershell
+    'CSV_URL=https://www.datos.gov.co/resource/uzcf-b9dh.json' | Out-File -FilePath .env -Encoding utf8
+    ```
+  2. Asegúrate de tener `python-dotenv` instalado (está en `requirements.txt`). El código carga `.env` automáticamente.
+  3. Ejecuta la app desde la misma terminal:
+    ```powershell
+    streamlit run .\app.py
+    ```
+
+- Nota: la app intenta cargar primero CSV, luego JSON con `pd.read_json`, y por último usa `requests` + `pd.json_normalize`.
+
+Si prefieres que añada `CSV_URL` a `st.secrets` en Streamlit Cloud, dímelo y te guío paso a paso.

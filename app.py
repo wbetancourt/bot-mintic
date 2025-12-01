@@ -12,79 +12,74 @@ import tempfile
 
 CSV_PATH = "Asset_Inventory_-_Public_20251119.csv"
 
-# ⚠️ Reemplaza con tu API KEY
-client = OpenAI(api_key="TU_API_KEY_AQUI")
+client = OpenAI(api_key="TU_API_KEY_AQUI")  # REEMPLAZAR
 
 # =====================================
-# CARGA DE DATOS COMPLETOS (SIN LÍMITE)
+# CARGA DE DATOS SEGURA
 # =====================================
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv(CSV_PATH, encoding="utf-8")
-    return df
+    if not os.path.exists(CSV_PATH):
+        st.error(f"❌ ERROR: No se encuentra el archivo CSV:\n**{CSV_PATH}**")
+        st.stop()
+
+    try:
+        df = pd.read_csv(CSV_PATH, encoding="utf-8")
+        return df
+    except Exception as e:
+        st.error("❌ ERROR leyendo el archivo CSV.")
+        st.error(str(e))
+        st.stop()
 
 df = load_data()
 
 # =====================================
-# FUNCIÓN LLM → con muestra pequeña
+# FUNCIÓN LLM
 # =====================================
 
 def ask_llm(question):
 
-    # Para evitar límites se envía SOLO:
-    # - nombres de columnas
-    # - 5 filas de muestra
-    sample_df = df.head(5).to_dict(orient="records")
-
     prompt = f"""
-Eres un asistente experto en análisis de datos.
+    Eres un asistente experto en análisis de datos.
+    Dataset cargado con {df.shape[0]} filas y {df.shape[1]} columnas.
 
-INFORMACIÓN DEL DATASET REAL:
-- Filas reales: {df.shape[0]}
-- Columnas reales: {df.shape[1]}
+    Columnas disponibles:
+    {', '.join(df.columns)}
 
-Columnas disponibles:
-{', '.join(df.columns)}
+    FORMATO RESPUESTA OBLIGATORIO:
+    --------------------------------------
+    1) Si piden GRÁFICOS → responde SOLO JSON así:
+    {{
+        "accion": "graficar",
+        "tipo": "bar" | "line" | "pie",
+        "x": "columna_x",
+        "y": "columna_y",
+        "agregacion": "count" | "sum" | "none"
+    }}
 
-MUESTRA REAL DE 5 REGISTROS:
-{sample_df}
+    2) Si piden TABLAS →
+    {{
+        "accion": "tabla",
+        "columnas": ["col1", "col2"]
+    }}
 
-REGLAS DE SALIDA:
--------------------------
-1) Si el usuario solicita un gráfico:
-{{
-    "accion": "graficar",
-    "tipo": "bar" | "line" | "pie",
-    "x": "columna_x",
-    "y": "columna_y",
-    "agregacion": "count" | "sum" | "none"
-}}
+    3) Si piden FILTROS →
+    {{
+        "accion": "filtrar",
+        "columna": "columna",
+        "valor": "valor"
+    }}
 
-2) Si el usuario solicita una tabla:
-{{
-    "accion": "tabla",
-    "columnas": ["col1", "col2"]
-}}
-
-3) Si solicita un filtro:
-{{
-    "accion": "filtrar",
-    "columna": "nombre",
-    "valor": "valor"
-}}
-
-4) Si NO necesita gráfico o tabla → responde SOLO en texto plano.
-
-Pregunta del usuario:
-{question}
-"""
+    4) Si es solo una pregunta →
+        responde texto plano.
+    """
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Eres un asistente analítico experto en datos abiertos. Usa JSON válido SOLO cuando se requieran acciones."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": "Eres un asistente analítico que devuelve JSON válido cuando el usuario pide gráficos o tablas."},
+            {"role": "user", "content": prompt + "\n\nPregunta: " + question}
         ]
     )
 
@@ -92,40 +87,31 @@ Pregunta del usuario:
 
 
 # =====================================
-# EJECUCIÓN DE INSTRUCCIONES JSON
+# EJECUCIÓN DEL JSON DEL LLM
 # =====================================
 
 def ejecutar_instruccion(instr):
-
-    # Intentar cargar JSON. Si falla, es texto normal.
     try:
         instr = json.loads(instr)
     except:
         st.write(instr)
         return
 
-    # ---- TABLA ----
+    # TABLA
     if instr.get("accion") == "tabla":
         columnas = instr.get("columnas", [])
-        if all(col in df.columns for col in columnas):
-            st.dataframe(df[columnas].head(20))
-        else:
-            st.error("Una o más columnas no existen.")
+        st.dataframe(df[columnas].head())
         return
 
-    # ---- FILTRO ----
+    # FILTRO
     if instr.get("accion") == "filtrar":
         col = instr.get("columna")
         val = instr.get("valor")
-        if col not in df.columns:
-            st.error("Columna no válida.")
-            return
         filtrado = df[df[col] == val]
-        st.write(f"Filas encontradas: {len(filtrado)}")
-        st.dataframe(filtrado.head(50))
+        st.dataframe(filtrado.head())
         return
 
-    # ---- GRÁFICOS ----
+    # GRÁFICO
     if instr.get("accion") == "graficar":
         tipo = instr.get("tipo")
         x = instr.get("x")
@@ -133,7 +119,7 @@ def ejecutar_instruccion(instr):
         agg = instr.get("agregacion", "count")
 
         if x not in df.columns or y not in df.columns:
-            st.error("Columnas del gráfico no válidas.")
+            st.error("Las columnas indicadas no existen.")
             return
 
         if agg == "count":
@@ -157,32 +143,29 @@ def ejecutar_instruccion(instr):
 
     st.write(instr)
 
-
 # =====================================
 # INTERFAZ STREAMLIT
 # =====================================
 
 st.title("🤖 Chatbot de Datos Abiertos – MINTIC")
-st.write("Pregunta sobre el dataset, solicita gráficos o tablas.")
+st.write("Pregunta sobre el dataset, o solicita gráficos/tablas.")
 
+# =====================================
+# SECCIÓN DE VOZ
+# =====================================
 
-# ====================================================
-# 🔊 PREGUNTAS POR VOZ
-# ====================================================
+st.subheader("🎤 Habla con el Chatbot")
 
-st.subheader("🎤 Pregunta con tu voz")
-
-audio_bytes = st.audio_input("Graba tu pregunta")
+audio_bytes = st.audio_input("Graba tu pregunta:")
 
 if audio_bytes is not None:
-    with st.spinner("Procesando audio..."):
+    with st.spinner("Procesando..."):
 
-        # Guardar audio temporal
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_audio:
             tmp_audio.write(audio_bytes)
             audio_path = tmp_audio.name
 
-        # === Voz → Texto ===
+        # WHISPER
         with open(audio_path, "rb") as f:
             transcripcion = client.audio.transcriptions.create(
                 model="whisper-1",
@@ -192,12 +175,12 @@ if audio_bytes is not None:
         texto_usuario = transcripcion.text
         st.success(f"🧍 Dijiste: **{texto_usuario}**")
 
-        # Enviar al LLM
         respuesta_texto = ask_llm(texto_usuario)
+
         st.write("🤖 Respuesta:")
         ejecutar_instruccion(respuesta_texto)
 
-        # === Texto → Voz ===
+        # TTS
         speech = client.audio.speech.create(
             model="gpt-4o-mini-tts",
             voice="alloy",
@@ -209,36 +192,31 @@ if audio_bytes is not None:
             audio_out_path = tmp_out.name
 
         with open(audio_out_path, "rb") as f:
-            audio_bytes = f.read()
+            st.audio(f.read(), format="audio/mp3")
 
-        st.audio(audio_bytes, format="audio/mp3")
-
-
-# ====================================================
+# =====================================
 # TEXTO NORMAL
-# ====================================================
+# =====================================
 
 query = st.text_area("O escribe tu pregunta:")
 
 if st.button("Preguntar por texto"):
     if not query.strip():
-        st.warning("Escribe una pregunta primero")
+        st.warning("Escribe una pregunta.")
     else:
         respuesta = ask_llm(query)
         ejecutar_instruccion(respuesta)
-
 
 # =====================================
 # ENDPOINT PARA N8N
 # =====================================
 
 st.markdown("---")
-st.subheader("🌐 Endpoint para n8n (POST /bot)")
+st.subheader("🌐 Endpoint para n8n")
 
 if "http_request" in st.session_state:
     data = st.session_state.http_request
     msg = data.get("msg", "")
-
     if msg:
         resp = ask_llm(msg)
         st.json({"reply": resp})
