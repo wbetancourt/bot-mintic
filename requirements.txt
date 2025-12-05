@@ -1,5 +1,7 @@
-streamlit
+﻿streamlit
 pandas
-matplotlib
-python-dotenv
+requests
+plotly
 openai
+python-dotenv
+matplotlib
