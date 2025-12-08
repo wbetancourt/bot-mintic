@@ -12,7 +12,7 @@ import os
 # ======================================================
 
 API_URL = "https://www.datos.gov.co/resource/uzcf-b9dh.json?$limit=50000"
-LOCAL_FILE = "Asset_Inventory_-_Public_20251119.csv"
+CSV_PATH = "Asset_Inventory_-_Public_20251119.csv"
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
@@ -26,28 +26,28 @@ def load_from_api():
     r = requests.get(API_URL)
     r.raise_for_status()
     df = pd.DataFrame(r.json())
-    st.success(f"Datos API cargados: {df.shape[0]} filas, {df.shape[1]} columnas.")
+    st.success(f"API cargada: {df.shape[0]} filas, {df.shape[1]} columnas.")
     return df
 
-@st.cache_data
+@st.cache_data()
 def load_from_csv():
-    st.info("📄 Cargando archivo local CSV...")
-    df = pd.read_csv(LOCAL_FILE, encoding="utf-8", low_memory=False)
+    st.info("📄 Cargando archivo CSV local...")
+    df = pd.read_csv(CSV_PATH)
     st.success(f"CSV cargado: {df.shape[0]} filas, {df.shape[1]} columnas.")
     return df
 
-# Selector en la interfaz
-st.sidebar.title("📌 Fuente de Datos")
+# ======================================================
+# SELECCIÓN DE FUENTE DE DATOS
+# ======================================================
+
+st.sidebar.header("⚙️ Configuración de Datos")
 
 source = st.sidebar.radio(
-    "Selecciona el origen del dataset:",
-    ["API datos.gov.co", "CSV Local"]
+    "Selecciona la fuente de datos:",
+    ("API", "CSV local")
 )
 
-if source == "API datos.gov.co":
-    df = load_from_api()
-else:
-    df = load_from_csv()
+df = load_from_api() if source == "API" else load_from_csv()
 
 # ======================================================
 # FUNCIÓN LLM
@@ -114,26 +114,36 @@ def ejecutar_instruccion(instr):
         st.write(instr)
         return
 
-    # Tabla
+    # TABLA
     if instr.get("accion") == "tabla":
-        columnas = instr.get("columnas", [])
-        st.dataframe(df[columnas].head())
+        cols = instr.get("columnas", [])
+        if all(c in df.columns for c in cols):
+            st.dataframe(df[cols].head())
+        else:
+            st.error("Columnas no existen en el dataset.")
         return
 
-    # Filtro
+    # FILTRO
     if instr.get("accion") == "filtrar":
         col = instr.get("columna")
         val = instr.get("valor")
-        filtrado = df[df[col] == val]
-        st.dataframe(filtrado.head())
+        if col in df.columns:
+            filtrado = df[df[col].astype(str) == str(val)]
+            st.dataframe(filtrado.head())
+        else:
+            st.error(f"La columna '{col}' no existe.")
         return
 
-    # Gráfico
+    # GRAFICO
     if instr.get("accion") == "graficar":
         tipo = instr.get("tipo")
         x = instr.get("x")
         y = instr.get("y")
         agg = instr.get("agregacion", "count")
+
+        if x not in df.columns or y not in df.columns:
+            st.error("Columnas inválidas para graficar.")
+            return
 
         dtemp = df.copy()
 
@@ -143,13 +153,16 @@ def ejecutar_instruccion(instr):
         elif agg == "sum":
             dtemp = dtemp.groupby(x)[y].sum().reset_index()
 
-        # Plotly
+        # plotly
         if tipo == "bar":
             fig = px.bar(dtemp, x=x, y=y)
         elif tipo == "line":
             fig = px.line(dtemp, x=x, y=y)
         elif tipo == "pie":
             fig = px.pie(dtemp, names=x, values=y)
+        else:
+            st.error("Tipo de gráfico no reconocido.")
+            return
 
         st.plotly_chart(fig, use_container_width=True)
         return
@@ -165,6 +178,7 @@ st.title("🤖 Chatbot Inteligente – Datos Abiertos MINTIC")
 st.write("Pregunta por texto o por voz sobre el dataset seleccionado.")
 
 # ---------------------- Pregunta por Texto ------------------------
+
 query = st.text_area("Escribe tu pregunta:")
 
 if st.button("Enviar pregunta"):
@@ -175,42 +189,44 @@ if st.button("Enviar pregunta"):
         ejecutar_instruccion(resp)
 
 # ---------------------- Pregunta por Voz ------------------------
+
 st.subheader("🎤 Habla con el Chatbot")
 
-audio_bytes = st.audio_input("Graba tu pregunta:")
+audio_data = st.audio_input("Graba tu pregunta:")
 
-if audio_bytes is not None:
+if audio_data is not None:
     with st.spinner("Procesando audio..."):
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_audio:
-            tmp_audio.write(audio_bytes)
-            audio_path = tmp_audio.name
+        # Guardar archivo de audio correctamente
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            tmp.write(audio_data.getbuffer())
+            audio_path = tmp.name
 
-        # WHISPER
+        # WHISPER → texto
         with open(audio_path, "rb") as f:
             transcripcion = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f
             )
 
-        texto_usuario = transcripcion.text
-        st.success(f"🧍 Dijiste: **{texto_usuario}**")
+        user_text = transcripcion.text
+        st.success(f"🧍 Dijiste: **{user_text}**")
 
-        respuesta_texto = ask_llm(texto_usuario)
+        respuesta = ask_llm(user_text)
 
         st.write("🤖 Respuesta:")
-        ejecutar_instruccion(respuesta_texto)
+        ejecutar_instruccion(respuesta)
 
-        # TTS
+        # TTS → voz
         speech = client.audio.speech.create(
             model="gpt-4o-mini-tts",
             voice="alloy",
-            input=respuesta_texto
+            input=respuesta
         )
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_out:
             tmp_out.write(speech)
-            audio_out_path = tmp_out.name
+            audio_output_path = tmp_out.name
 
-        with open(audio_out_path, "rb") as f:
+        with open(audio_output_path, "rb") as f:
             st.audio(f.read(), format="audio/mp3")
